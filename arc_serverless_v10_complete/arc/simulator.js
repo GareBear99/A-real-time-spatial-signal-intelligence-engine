@@ -1,6 +1,10 @@
 
 let timer
 let devices=["phone1","phone2"]
+/* Interval is a setting in the plugin (arc/settings.js
+ * simulatorIntervalMs, default 600) — the page sets this
+ * before starting the simulator. */
+let simulatorIntervalMs = 600
 
 function startSim(){
  if(timer) return
@@ -14,7 +18,7 @@ function startSim(){
    }
    bus.emit("signal",sig)
   })
- },600)
+ },simulatorIntervalMs)
 }
 
 function stopSim(){

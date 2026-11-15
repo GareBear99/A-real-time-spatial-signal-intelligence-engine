@@ -1,32 +1,65 @@
-
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>ARC v10 Spatial Signal Engine</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+<title>ARC v10 Offline Worldmap</title>
+<!-- Offline build: Leaflet + heat are vendored in ./vendor — no CDN, no network. -->
+<link rel="stylesheet" href="vendor/leaflet.css"/>
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/leaflet-heat.js"></script>
 <style>
 html,body,#map{height:100%;margin:0;background:#000}
 #ui{
 position:absolute;top:10px;left:10px;background:#111;color:#0f0;
-padding:10px;font-family:monospace;z-index:999;width:220px
+padding:10px;font-family:monospace;z-index:999;width:240px;
+max-height:calc(100% - 20px);overflow-y:auto;
 }
 button{width:100%;margin-top:4px}
+input,select{width:100%;margin-top:4px;background:#000;color:#0f0;border:1px solid #0f0;font-family:monospace}
+label{font-size:11px;display:block;margin-top:6px}
 canvas{position:absolute;top:0;left:0;pointer-events:none}
+#gpsStatus{font-size:11px;margin-top:4px;min-height:14px}
 </style>
 </head>
 <body>
 
 <div id="ui">
-<b>ARC v10 Engine</b><br>
+<b>ARC v10 Offline Worldmap</b><br>
 <button onclick="startSim()">Start Signals</button>
 <button onclick="stopSim()">Stop</button>
 <button onclick="toggleSensors()">Sensors</button>
 <button onclick="togglePath()">Paths</button>
 <button onclick="runRoomInference()">Infer Rooms</button>
 <div id="stats"></div>
+
+<label>GPS source
+<select id="gpsSource">
+<option value="none">None</option>
+<option value="simulator">Simulator (demo)</option>
+<option value="geolocation">Device GPS</option>
+<option value="gpx">GPX file</option>
+<option value="nmea">NMEA file</option>
+</select>
+</label>
+<label>GPX file <input id="gpxFile" type="file" accept=".gpx,.xml"></label>
+<label>NMEA file <input id="nmeaFile" type="file" accept=".nmea,.txt"></label>
+<div id="gpsStatus"></div>
+
+<label>Centre latitude <input id="centerLat" type="number" step="0.001" min="-90" max="90"></label>
+<label>Centre longitude <input id="centerLon" type="number" step="0.001" min="-180" max="180"></label>
+<label>Zoom <input id="zoom" type="number" step="1" min="0" max="19"></label>
+<label>Tile source
+<select id="tileMode">
+<option value="grid">Grid (no tiles — offline)</option>
+<option value="local">Local tile directory</option>
+<option value="url">Tile URL template</option>
+</select>
+</label>
+<label>Tile directory / path <input id="tilePath" type="text" placeholder="tiles or file:///path/to/tiles"></label>
+<label>Tile URL template <input id="tileUrlTemplate" type="text" placeholder="https://{s}.tile.example.com/{z}/{x}/{y}.png"></label>
+<label>Simulator devices (comma separated) <input id="simulatorDevices" type="text"></label>
+<label><input id="showPaths" type="checkbox" style="width:auto"> Show paths</label>
+<button onclick="applyWorldmapSettingsFromUI()">Apply settings</button>
 </div>
 
 <div id="map"></div>
@@ -40,10 +73,112 @@ canvas{position:absolute;top:0;left:0;pointer-events:none}
 <script src="arc/sensors.js"></script>
 <script src="arc/webgl_rf.js"></script>
 <script src="arc/room_inference.js"></script>
+<script src="arc/gps.js"></script>
+<script src="arc/settings.js"></script>
 
 <script>
-initMap()
-initRF()
+/* Boot: settings first (localStorage standalone, or the parent
+ * pushes its own over postMessage once embedded), then map + RF. */
+const bootSettings = WorldmapSettings.load();
+initMap(bootSettings);
+initRF();
+syncWorldmapSettingsUI(bootSettings);
+
+function gpsStatus(text) {
+  const el = document.getElementById('gpsStatus');
+  if (el) el.textContent = text;
+}
+
+/* Called by settings.js whenever settings change (UI apply or a
+ * postMessage from the parent). Re-points the map, swaps the tile
+ * layer, and switches the GPS source. */
+function applyWorldmapSettings(settings) {
+  if (typeof map !== 'undefined' && map) {
+    map.setView([settings.centerLat, settings.centerLon], settings.zoom);
+    setTileLayer(settings);
+    showPath = settings.showPaths !== false;
+  }
+  stopSim();
+  WorldmapGPS.stopGeolocation();
+  devices = (settings.simulatorDevices || ['phone1', 'phone2']).slice();
+  simulatorIntervalMs = settings.simulatorIntervalMs || 600;
+  if (settings.gpsSource === 'simulator') {
+    startSim();
+    gpsStatus('Simulator running: ' + devices.join(', '));
+  } else if (settings.gpsSource === 'geolocation') {
+    const ok = WorldmapGPS.startGeolocation(
+      (fix) => WorldmapGPS.feedFixes('gps', [fix]),
+      (err) => gpsStatus('GPS unavailable: ' + err)
+    );
+    if (ok) gpsStatus('Device GPS: waiting for a fix…');
+  } else if (settings.gpsSource === 'gpx' || settings.gpsSource === 'nmea') {
+    gpsStatus('Pick a .' + settings.gpsSource + ' file below to plot it.');
+  } else {
+    gpsStatus('');
+  }
+}
+
+function syncWorldmapSettingsUI(settings) {
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+  set('gpsSource', settings.gpsSource);
+  set('centerLat', settings.centerLat);
+  set('centerLon', settings.centerLon);
+  set('zoom', settings.zoom);
+  set('tileMode', settings.tileMode);
+  set('tilePath', settings.tilePath);
+  set('tileUrlTemplate', settings.tileUrlTemplate);
+  set('simulatorDevices', (settings.simulatorDevices || []).join(', '));
+  const paths = document.getElementById('showPaths');
+  if (paths) paths.checked = settings.showPaths !== false;
+}
+
+function applyWorldmapSettingsFromUI() {
+  const num = (id) => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : undefined; };
+  const str = (id) => { const el = document.getElementById(id); return el ? el.value : undefined; };
+  const paths = document.getElementById('showPaths');
+  WorldmapSettings.set({
+    centerLat: num('centerLat'),
+    centerLon: num('centerLon'),
+    zoom: num('zoom'),
+    tileMode: str('tileMode'),
+    tilePath: str('tilePath'),
+    tileUrlTemplate: str('tileUrlTemplate'),
+    gpsSource: str('gpsSource'),
+    simulatorDevices: (str('simulatorDevices') || '').split(',').map(s => s.trim()).filter(Boolean),
+    showPaths: paths ? paths.checked : undefined,
+  });
+}
+
+document.getElementById('gpsSource').addEventListener('change', (e) => {
+  WorldmapSettings.set({ gpsSource: e.target.value });
+});
+document.getElementById('gpxFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  WorldmapGPS.loadGPXFile(file, 'gpx-track').then(
+    (n) => gpsStatus('GPX plotted: ' + n + ' fixes.'),
+    (err) => gpsStatus('GPX failed: ' + (err && err.message ? err.message : err))
+  );
+});
+document.getElementById('nmeaFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  WorldmapGPS.loadNMEAFile(file, 'nmea-track').then(
+    (n) => gpsStatus('NMEA plotted: ' + n + ' fixes.'),
+    (err) => gpsStatus('NMEA failed: ' + (err && err.message ? err.message : err))
+  );
+});
+
+/* Test/debug hook (also how the Lucid segment reads state back):
+ * map, device graph, bus, settings and GPS parsers. */
+window.__worldmap = {
+  get map() { return map; },
+  get graph() { return graph; },
+  bus: bus,
+  settings: WorldmapSettings,
+  gps: WorldmapGPS,
+};
+WorldmapSettings.postToParent({ type: 'worldmap:ready', settings: WorldmapSettings.get() });
 </script>
 
 </body>
