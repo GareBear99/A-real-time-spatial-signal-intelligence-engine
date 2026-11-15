@@ -2,7 +2,7 @@
 
 ARC is a browser-first spatial signal intelligence prototype focused on structure-locked mapping, synthetic RF/WiFi sensor simulation, GPS fallback map rendering, and blueprint-aligned interior estimation.
 
-This package consolidates the uploaded project into **one canonical GitHub-ready version**.
+This package is the **light shell** of the project: the v17 GPS fallback map build. The full app is `ARC_Spatial_Intelligence_RG_Fusion_v8_9/` (inference core, ops backend, service layer, XYO visuals, v8.9 local address tiling).
 
 ## Canonical Runtime
 
@@ -12,13 +12,13 @@ The canonical runtime is the **v17 GPS Fallback Map** build located in:
 app/
 ```
 
-Open `app/index.html` in a browser to run the current offline-safe shell.
+Open `app/index.html` in a browser to run the shell. Note: it fetches OpenStreetMap tiles at runtime, so it is **not** offline-safe — it only avoids the Leaflet CDN dependency.
 
 ## What This Canonical Package Includes
 
 - **Canonical app runtime** using the v17 structure-locked GPS fallback map shell
 - **Bundled local app code** in `app/arc/`
-- **Legacy v10 source reference** preserved in `legacy/v10_source/`
+- **Legacy v10 package** at the repo top level (`arc_serverless_v10_complete/`) — also the base for the offline worldmap Lucid add-on
 - **Architecture, roadmap, and packaging docs** in `docs/`
 - **GitHub metadata recommendations** for repo positioning and search discoverability
 
@@ -83,8 +83,8 @@ osint
 
 ## Canonical Package Notes
 
-- **v17 is the canonical runtime** for this package.
-- **v10 is preserved only as legacy reference**, not as the primary app.
+- **v17 is the runtime** for this package (the light shell).
+- **v10 is preserved as legacy reference** at the repo top level, not as the primary app — and it is the base for the offline worldmap Lucid add-on.
 - The current build is still a prototype/research shell, not a validated real-world RF intelligence platform.
 - The estimator and room/zone inference are synthetic/demo logic and should be treated as simulation scaffolding.
 

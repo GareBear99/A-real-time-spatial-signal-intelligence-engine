@@ -1,0 +1,10 @@
+{
+  "description": "LuciferAI RG Fusion v8.9 — spatial intelligence command center with inference core, ops backend, service architecture layer, XYO visual upgrade, and local address tiling.",
+  "license": "MIT",
+  "name": "arc-spatial-rg-fusion",
+  "private": true,
+  "scripts": {
+    "serve": "python3 -m http.server 8080 -d app"
+  },
+  "version": "8.9.0"
+}

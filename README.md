@@ -29,8 +29,7 @@ This means the repo should be understood as a **prototype + architecture package
 ### Primary routes
 
 - **Canonical prototype package:** [`ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/`](ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/)
-- **RG Fusion service-oriented prototype:** [`ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed/`](ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed/)
-- **Offline GPS fallback map shell:** [`ARC_v17_gps_fallback_map/`](ARC_v17_gps_fallback_map/)
+- **RG Fusion full app (v8.9):** [`ARC_Spatial_Intelligence_RG_Fusion_v8_9/`](ARC_Spatial_Intelligence_RG_Fusion_v8_9/)
 - **Root architecture docs:** [`docs/`](docs/)
 
 ### Fastest local run path
@@ -44,11 +43,7 @@ python3 -m http.server 8080 -d app
 
 Then open `http://localhost:8080`.
 
-You can also run the root offline fallback shell from:
-
-```text
-ARC_v17_gps_fallback_map/index.html
-```
+The v17 GPS fallback map shell lives in that same Canonical package (`app/`). It is **not** offline-safe: it fetches OpenStreetMap tiles at runtime.
 
 ---
 
@@ -75,9 +70,9 @@ Signals are treated as **physical observations with uncertainty**, not just isol
 - synthetic signal simulation scaffolding
 - estimator and room-inference modules
 - blueprint / structure-aligned mapping experiments
-- GPS fallback map shells
+- GPS fallback map shell
 - local demo/operator panels
-- multiple packaged prototype variants with changelog history
+- two packaged prototype variants (full app + light shell) with changelog history
 
 ### Still not represented as production-ready
 
@@ -112,9 +107,7 @@ A-real-time-spatial-signal-intelligence-engine/
 │  ├─ seo-promotion.md
 │  └─ repo-setup-checklist.md
 ├─ ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/
-├─ ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed/
-├─ ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed 5/
-├─ ARC_v17_gps_fallback_map/
+├─ ARC_Spatial_Intelligence_RG_Fusion_v8_9/
 └─ arc_serverless_v10_complete/
 ```
 
@@ -124,11 +117,9 @@ A-real-time-spatial-signal-intelligence-engine/
 
 | Package | Role | Notes |
 |---|---|---|
-| [`ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1`](ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/) | Canonical browser-first package | Best first stop for public repo visitors |
-| [`ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed`](ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed/) | richer operator / fusion package | Includes broader ops-style framing |
-| [`ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed 5`](ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed%205/) | duplicate/alternate packaged variant | Preserved package state from exported build |
-| [`ARC_v17_gps_fallback_map`](ARC_v17_gps_fallback_map/) | offline-safe fallback map shell | Fast local map-based prototype |
-| [`arc_serverless_v10_complete`](arc_serverless_v10_complete/) | older browser package | Useful as historical reference only |
+| [`ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1`](ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/) | Canonical browser-first package — the v17 GPS fallback map shell | Best first stop for public repo visitors; light shell, no v6/v7/v8 features |
+| [`ARC_Spatial_Intelligence_RG_Fusion_v8_9`](ARC_Spatial_Intelligence_RG_Fusion_v8_9/) | Full app — inference core + ops backend + service layer + XYO visuals + v8.9 local address tiling | The fullest build in the repo; develop against this one |
+| [`arc_serverless_v10_complete`](arc_serverless_v10_complete/) | Older browser package — and the base for the offline worldmap Lucid add-on | Small Leaflet demo; its triangulation is a centroid average and its room inference is an `alert()` stub |
 
 ---
 
@@ -190,15 +181,15 @@ python3 -m http.server 8080 -d app
 ### Serve the RG fusion package
 
 ```bash
-cd ARC_Spatial_Intelligence_RG_Fusion_v8_1_Fixed
+cd ARC_Spatial_Intelligence_RG_Fusion_v8_9
 python3 -m http.server 8080 -d app
 ```
 
-### Serve the offline fallback shell
+### Serve the GPS fallback map shell (Canonical v1's app — online tiles)
 
 ```bash
-cd ARC_v17_gps_fallback_map
-python3 -m http.server 8080
+cd ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1
+python3 -m http.server 8080 -d app
 ```
 
 ---

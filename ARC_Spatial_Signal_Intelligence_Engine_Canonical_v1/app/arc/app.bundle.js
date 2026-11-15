@@ -160,6 +160,6 @@ function wireUI(){ $('searchBtn').onclick=()=>{ const results=searchStructures($
   ['bpOpacity','bpScale','bpOffsetX','bpOffsetY'].forEach(id=>$(id).oninput=()=>{ state.blueprint.opacity=Number($('bpOpacity').value); state.blueprint.scale=Number($('bpScale').value); state.blueprint.offsetX=Number($('bpOffsetX').value); state.blueprint.offsetY=Number($('bpOffsetY').value); map.redraw(); });
   $('saveBlueprint').onclick=()=>{ saveBlueprintState(); log('BLUEPRINT SAVE'); }; $('resetBlueprint').onclick=()=>{ Object.assign(state.blueprint,{opacity:.45,scale:1,offsetX:0,offsetY:0}); $('bpOpacity').value=.45; $('bpScale').value=1; $('bpOffsetX').value=0; $('bpOffsetY').value=0; map.redraw(); log('BLUEPRINT RESET'); };
 }
-function init(){ setBoot('LOAD_DATA'); state.structures=demoStructures.slice(); populateSelect(state.structures); setBoot('INIT_MAP'); map=state.map=createMapEngine(); initRF(); map.on('move',drawRF); map.on('zoom',drawRF); map.on('resize',()=>{ map.redraw(); drawRF(); }); setBoot('WIRE_UI'); wireUI(); updateSelectionHud(); map.redraw(); setBoot('READY'); log('ARC v16 ready'); }
+function init(){ setBoot('LOAD_DATA'); state.structures=demoStructures.slice(); populateSelect(state.structures); setBoot('INIT_MAP'); map=state.map=createMapEngine(); initRF(); map.on('move',drawRF); map.on('zoom',drawRF); map.on('resize',()=>{ map.redraw(); drawRF(); }); setBoot('WIRE_UI'); wireUI(); updateSelectionHud(); map.redraw(); setBoot('READY'); log('ARC v17 ready'); }
 try{ init(); }catch(err){ fatal(err); }
 })();
