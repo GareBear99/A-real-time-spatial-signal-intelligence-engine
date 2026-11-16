@@ -84,6 +84,7 @@ details summary{cursor:pointer;font-size:11px}
 <select id="estimatorMethod">
 <option value="multilateration">Best fit from signal strength</option>
 <option value="weighted">Weighted average</option>
+<option value="weighted-rssi-centroid">Weighted RSSI centroid (ARC-Core)</option>
 </select>
 </label>
 <label><input id="useFilter" type="checkbox" style="width:auto"> Smooth the track</label>
@@ -94,11 +95,27 @@ details summary{cursor:pointer;font-size:11px}
 <option value="urban">City (dense)</option>
 <option value="residential">Home</option>
 <option value="interference">Noisy</option>
+<option value="arc-default">ARC-Core default (2.2 / 3.5 / 0.65)</option>
 <option value="wizard">Calibrated by me</option>
 </select>
 </label>
 <label><input id="showPaths" type="checkbox" style="width:auto"> Show paths</label>
 <button onclick="applyWorldmapSettingsFromUI()">Apply settings</button>
+</details>
+
+<details id="continuumPanel">
+<summary>Continuum — structures, geofences &amp; heat</summary>
+<div style="font-size:11px">ARC-Core's geospatial surface: the three seeded Williams Lake structures, their perimeter geofences, zones and the track heat grid. Every fix is classified into a zone with its geofence hits.</div>
+<button onclick="toggleContinuum()">Show structures &amp; geofences</button>
+<button onclick="toggleContinuumHeat()">Show track heat grid</button>
+<div id="continuumStatus" style="font-size:11px;margin-top:4px"></div>
+<div id="continuumStructures" style="font-size:11px;margin-top:4px"></div>
+<div id="continuumCalibrations" style="font-size:11px;margin-top:4px"></div>
+<label>Blueprint image (local file)
+<select id="blueprintStructure"></select>
+<input id="blueprintFile" type="file" accept="image/*"></label>
+<div id="continuumBlueprints" style="font-size:11px;margin-top:4px"></div>
+<div id="continuumTracks" style="font-size:11px;margin-top:4px"></div>
 </details>
 </div>
 
@@ -110,6 +127,7 @@ details summary{cursor:pointer;font-size:11px}
 <script src="arc/geo.js"></script>
 <script src="arc/pathloss.js"></script>
 <script src="arc/estimator.js"></script>
+<script src="arc/continuum.js"></script>
 <script src="arc/filter.js"></script>
 <script src="arc/lab.js"></script>
 <script src="arc/evidence.js"></script>
@@ -137,6 +155,7 @@ applyEngineSettings(bootSettings);
 try { WorldmapSensors.SensorStore.load(); } catch (e) { /* start empty */ }
 try { WorldmapRF.setRFSensors(WorldmapSensors.SensorStore.list()); } catch (e) { /* no sensors yet */ }
 syncWorldmapSettingsUI(bootSettings);
+renderContinuumPanel();
 
 let placeSensorMode = false;
 
@@ -157,6 +176,8 @@ function setSimBadge(on) {
 function applyEngineSettings(settings) {
   window.worldmapEstimatorMethod = settings.estimatorMethod || 'multilateration';
   window.worldmapUseFilter = settings.useFilter !== false;
+  window.worldmapShowContinuum = settings.showContinuum !== false;
+  window.worldmapShowContinuumHeat = settings.showContinuumHeat === true;
   if (typeof WorldmapEstimator !== 'undefined' && WorldmapEstimator.setProfile) {
     WorldmapEstimator.setProfile(settings.calibrationProfile || 'balanced');
   }
@@ -238,6 +259,109 @@ function applyWorldmapSettingsFromUI() {
     calibrationProfile: str('calibrationProfile'),
   });
 }
+
+/* Continuum panel (ARC-Core geo console, /ui/geo.html):
+ * structures, calibration profiles, blueprint overlays and the
+ * latest tracks. The toggles flip the map layers without
+ * restarting the engine — they save the setting directly
+ * instead of going through WorldmapSettings.set (which
+ * re-applies the whole engine: tiles, GPS source, simulator). */
+function continuumSetting(key, value) {
+  const s = WorldmapSettings.get();
+  s[key] = value;
+  WorldmapSettings.current = sanitizeWorldmapSettings(s);
+  WorldmapSettings.save();
+  WorldmapSettings.postToParent({ type: 'worldmap:settings-changed', settings: WorldmapSettings.get() });
+}
+
+function toggleContinuum() {
+  const next = !((WorldmapSettings.get() || {}).showContinuum !== false);
+  window.worldmapShowContinuum = next;
+  continuumSetting('showContinuum', next);
+  if (typeof renderContinuumOnMap === 'function') renderContinuumOnMap();
+  renderContinuumPanel();
+}
+
+function toggleContinuumHeat() {
+  const next = !((WorldmapSettings.get() || {}).showContinuumHeat === true);
+  window.worldmapShowContinuumHeat = next;
+  continuumSetting('showContinuumHeat', next);
+  if (typeof renderContinuumOnMap === 'function') renderContinuumOnMap();
+  renderContinuumPanel();
+}
+
+function renderContinuumPanel() {
+  if (typeof WorldmapContinuum === 'undefined') return;
+  const structuresEl = document.getElementById('continuumStructures');
+  if (structuresEl) {
+    structuresEl.innerHTML = '<b>Structures</b><br>' + WorldmapContinuum.CONTINUUM_STRUCTURES.map((s) =>
+      s.name + ' · ' + s.structure_type + ' · ' + s.levels + ' level' + (s.levels === 1 ? '' : 's') + ' · ' + s.address
+    ).join('<br>');
+  }
+  const calEl = document.getElementById('continuumCalibrations');
+  if (calEl) {
+    const active = (WorldmapSettings.get() || {}).calibrationProfile === 'arc-default';
+    calEl.innerHTML = '<b>Calibration profiles</b>' + (active ? ' · ARC-Core default in use' : '') + '<br>' +
+      WorldmapContinuum.CONTINUUM_CALIBRATIONS.map((c) =>
+        c.name + ' · path loss ' + c.profile.path_loss + ' · noise ' + c.profile.noise_db + ' dB · smoothing ' + c.profile.smoothing
+      ).join('<br>');
+  }
+  const bpEl = document.getElementById('continuumBlueprints');
+  if (bpEl) {
+    bpEl.innerHTML = '<b>Blueprint overlays</b><br>' + WorldmapContinuum.listBlueprintOverlays().map((b) =>
+      b.name + ' · opacity ' + b.opacity + ' · floor ' + b.floor + (b.imageLoaded ? ' · image attached' : ' · no image yet')
+    ).join('<br>');
+  }
+  const sel = document.getElementById('blueprintStructure');
+  if (sel && !sel.options.length) {
+    WorldmapContinuum.CONTINUUM_STRUCTURES.forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name;
+      sel.appendChild(opt);
+    });
+  }
+  updateContinuumUI();
+}
+
+/* Latest-fix status + recent tracks (geo.html's tracks table,
+ * compact): refreshed on every map update, cheap text only. */
+function updateContinuumUI() {
+  const statusEl = document.getElementById('continuumStatus');
+  const tracksEl = document.getElementById('continuumTracks');
+  if (!statusEl && !tracksEl) return;
+  if (typeof graph === 'undefined' || !graph || !graph.devices) return;
+  const rows = [];
+  Object.entries(graph.devices).forEach(([name, d]) => {
+    (d.locations || []).slice(-5).forEach((loc) => rows.push({ device: name, loc }));
+  });
+  const latest = rows.length ? rows[rows.length - 1] : null;
+  if (statusEl && latest) {
+    const hits = (latest.loc.geofenceHits || []).map((h) => h.name + ' (severity ' + h.severity + ')');
+    statusEl.textContent = latest.device + ': ' + (latest.loc.zone || 'outside every structure') +
+      (hits.length ? ' · inside ' + hits.join(', ') : ' · no geofence hit');
+  }
+  if (tracksEl && rows.length) {
+    tracksEl.innerHTML = '<b>Recent tracks</b><br>' + rows.slice(-5).reverse().map((r) =>
+      r.device + ' · ' + (r.loc.zone || '—') + ' · conf ' + Number(r.loc.confidence || 0).toFixed(2) + ' · ' + (r.loc.method || '')
+    ).join('<br>');
+  }
+}
+
+document.getElementById('blueprintFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file || typeof WorldmapContinuum === 'undefined') return;
+  const sel = document.getElementById('blueprintStructure');
+  const structureId = sel ? sel.value : null;
+  const attached = WorldmapContinuum.attachBlueprintImage(structureId, file);
+  if (attached) {
+    if (typeof renderContinuumOnMap === 'function') renderContinuumOnMap();
+    renderContinuumPanel();
+    gpsStatus('Blueprint attached: ' + attached.name + '.');
+  } else {
+    gpsStatus('Blueprint failed: pick a structure first.');
+  }
+});
 
 /* One-click accuracy check (Accuracy Lab): runs the seeded
  * test track through the current estimator and reports the
@@ -453,6 +577,7 @@ window.__worldmap = {
   rf: typeof WorldmapRF !== 'undefined' ? WorldmapRF : null,
   tiles: typeof WorldmapTiles !== 'undefined' ? WorldmapTiles : null,
   fingerprint: typeof WorldmapFingerprint !== 'undefined' ? WorldmapFingerprint : null,
+  continuum: typeof WorldmapContinuum !== 'undefined' ? WorldmapContinuum : null,
 };
 WorldmapSettings.postToParent({ type: 'worldmap:ready', settings: WorldmapSettings.get() });
 </script>

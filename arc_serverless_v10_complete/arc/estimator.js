@@ -13,6 +13,11 @@
  *       position best fitting all the distance circles. Needs >=3
  *       anchors with known positions; falls back to the weighted
  *       estimator below that.
+ *   1c. estimateWeightedRssiCentroid — ARC-Core's own estimator
+ *       (arc/geo/estimator.py::estimate_from_observations):
+ *       exponential-RSSI weights over ALL observations, no
+ *       top-4 cut, ARC-Core's confidence formula, method
+ *       'weighted-rssi-centroid'. Selectable from the UI.
  *
  * Both return the same shape:
  *   {point:{lat,lon}, confidence, method, cloud?, residualM?}
@@ -150,6 +155,71 @@ function estimateFromObservations(observations, structure, previous, truthFloor,
     clusterSpread,
     floor: Math.max(1, Math.min(structureLevels(structure), Math.round(inferredFloor || floor))),
     cloud: candidateCloud(point, Number(opts.cloudDensity || 0), Math.max(4, clusterSpread * 0.18 + (1 - confidence) * 18)),
+  };
+}
+
+/**
+ * (1c) ARC-Core's weighted-RSSI centroid
+ * (arc/geo/estimator.py::estimate_from_observations, ARC-Core
+ * v6.0.0) — ported exactly, so the map can run the same
+ * estimator the ARC-Core geo console runs:
+ *   weight = max(0.0001, 10^((rssi+100)/12)) * max(0.2, reliability)
+ * over ALL observations (no top-4 cut, no floor logic), then
+ * the weighted mean of the sensor positions. If a structure
+ * polygon is supplied and the point lands outside it, box-
+ * clamp to the structure's bounds (ARC-Core clamps the same
+ * way; it does not polygon-clamp).
+ *   confidence = clamp(0.32 + spread/22 + avgReliability*0.25,
+ *                      0.15, 0.99)
+ *   spread = |strongest rssi - second-strongest rssi|
+ *            (0 with fewer than 2 observations)
+ * Returns {point, confidence, method:'weighted-rssi-centroid',
+ * sensor_count}. No candidate cloud here: ARC-Core builds the
+ * cloud in estimate_track, not in the estimator — see
+ * continuum.js arcCandidateCloud.
+ * observations: [{sensor:{lat,lon}, rssi, reliability?}]
+ * (plugin shape) or [{sensor_lat, sensor_lng, rssi,
+ * reliability?}] (ARC-Core shape). structure: polygon /
+ * {polygon} / null.
+ */
+function estimateWeightedRssiCentroid(observations, structure) {
+  if (!observations || !observations.length) return null;
+  let sumW = 0;
+  let lat = 0;
+  let lon = 0;
+  const rssis = [];
+  let relSum = 0;
+  observations.forEach((obs) => {
+    if (!obs || typeof obs.rssi !== 'number') return;
+    const sensor = obs.sensor || { lat: obs.sensor_lat, lon: obs.sensor_lng, lng: obs.sensor_lng };
+    const p = WorldmapGeo.asPoint(sensor);
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return;
+    const reliability = typeof obs.reliability === 'number' ? obs.reliability : 1.0;
+    const weight = Math.max(0.0001, Math.pow(10, (obs.rssi + 100) / 12)) * Math.max(0.2, reliability);
+    sumW += weight;
+    lat += p.lat * weight;
+    lon += p.lon * weight;
+    rssis.push(obs.rssi);
+    relSum += reliability;
+  });
+  if (!sumW || !rssis.length) return null;
+  let point = { lat: lat / sumW, lon: lon / sumW };
+  const polygon = structurePolygon(structure);
+  if (polygon) {
+    const bounds = WorldmapGeo.boundsFromPolygon(polygon);
+    if (!WorldmapGeo.pointInPolygon(point, polygon)) {
+      point = WorldmapGeo.clampPointToBounds(point, bounds);
+    }
+  }
+  const sorted = rssis.slice().sort((a, b) => b - a);
+  const spread = sorted.length >= 2 ? Math.abs(sorted[0] - sorted[1]) : 0;
+  const avgRel = relSum / rssis.length;
+  const confidence = Math.max(0.15, Math.min(0.99, 0.32 + spread / 22 + avgRel * 0.25));
+  return {
+    point,
+    confidence: Number(confidence.toFixed(4)),
+    method: 'weighted-rssi-centroid',
+    sensor_count: rssis.length,
   };
 }
 
@@ -303,6 +373,7 @@ const WorldmapEstimator = {
   getProfile,
   setProfile,
   estimateFromObservations,
+  estimateWeightedRssiCentroid,
   multilaterate,
   candidateCloud,
   resolveAnchors,

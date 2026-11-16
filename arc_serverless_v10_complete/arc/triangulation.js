@@ -13,6 +13,17 @@
  *       the window the estimator runs multilateration, else the
  *       RSSI-weighted estimator; the fix is then Kalman-filtered
  *       and pushed to d.locations / d.path with its evidence.
+ *       The estimator method comes from settings: 'multilateration',
+ *       'weighted', or 'weighted-rssi-centroid' (ARC-Core's own
+ *       estimator, exact port in arc/estimator.js).
+ *
+ * Every fix — GPS or estimated — is classified by the continuum
+ * segment (arc/continuum.js, ARC-Core estimate_track): the
+ * containing structure, its zone (Center-Core / North / South /
+ * West / East), and any geofence hits. The classification rides
+ * on the location (loc.zone / loc.geofenceHits) and in its
+ * evidence pack; with the continuum layer off, locations carry
+ * none of it, exactly as before.
  *
  * The old centroid path survives ONLY as the fallback when the
  * new engine files (geo/pathloss/estimator/filter) are not
@@ -78,8 +89,25 @@ function kalmanSmooth(d, point, confidence) {
   };
 }
 
-function structureForDevice() {
+function structureForDevice(d) {
   if (typeof worldmapStructure !== 'undefined' && worldmapStructure) return worldmapStructure;
+  // Continuum segment: once a device's last fix was inside a
+  // seeded structure, that structure bounds the next estimate —
+  // ARC-Core's estimate_track clamps to the structure bounds.
+  // No previous fix inside a structure -> no structure, no
+  // clamping, exactly as before.
+  if (
+    typeof WorldmapContinuum !== 'undefined' &&
+    WorldmapContinuum.structureContaining &&
+    d &&
+    d._prevFix
+  ) {
+    try {
+      return WorldmapContinuum.structureContaining(d._prevFix) || null;
+    } catch (e) {
+      return null;
+    }
+  }
   return null;
 }
 
@@ -92,7 +120,7 @@ function calibrationForEvidence() {
   return WorldmapPathloss.resolveProfile(key) || {};
 }
 
-function buildFixEvidence(fix, observations, method, filterState) {
+function buildFixEvidence(fix, observations, method, filterState, geo) {
   if (typeof WorldmapEvidence === 'undefined') return null;
   const profile = calibrationForEvidence();
   const obs = (observations || []).map((o) => {
@@ -113,28 +141,58 @@ function buildFixEvidence(fix, observations, method, filterState) {
     calibration: profile,
     method,
     filterState,
+    zone: geo && geo.zone ? geo.zone : null,
+    geofenceHits: geo && geo.geofenceHits ? geo.geofenceHits : [],
   });
 }
 
-function pushLocation(d, point, confidence, method, evidence) {
+/**
+ * Continuum classification for one fix (ARC-Core
+ * estimate_track, minus the estimator and the receipt):
+ * the containing structure, its zone, and any geofence
+ * hits. Null when the continuum module is absent or the
+ * layer is switched off — locations then carry no zone,
+ * exactly as before.
+ */
+function continuumGeoForPoint(point) {
+  if (typeof worldmapShowContinuum !== 'undefined' && worldmapShowContinuum === false) return null;
+  if (typeof WorldmapContinuum === 'undefined' || !WorldmapContinuum.continuumGeoFor) return null;
+  try {
+    return WorldmapContinuum.continuumGeoFor(point);
+  } catch (e) {
+    return null;
+  }
+}
+
+function pushLocation(d, point, confidence, method, evidence, geo) {
   const loc = { lat: point.lat, lon: point.lon, confidence, method };
   if (evidence) loc.evidence = evidence;
+  if (geo) {
+    if (geo.zone) loc.zone = geo.zone;
+    if (geo.structureId) loc.structureId = geo.structureId;
+    if (geo.geofenceHits) loc.geofenceHits = geo.geofenceHits;
+  }
   d.locations.push(loc);
   d.path.push({ lat: point.lat, lon: point.lon });
   d._prevFix = { lat: point.lat, lon: point.lon };
+  if (geo) d._lastGeo = geo;
 }
 
 function handleGpsFix(d, sig) {
   const point = { lat: sig.lat, lon: sig.lon };
   const confidence = typeof sig.confidence === 'number' ? sig.confidence : 0.9;
   const smoothed = kalmanSmooth(d, point, confidence);
+  // Imported tracks get a zone too (ARC-Core
+  // import_track_points classifies the zone on import).
+  const geo = continuumGeoForPoint(smoothed.point);
   const evidence = buildFixEvidence(
     { point: smoothed.point, confidence, method: 'gps' },
     [],
     'gps',
     { type: 'kalman', innovationM: smoothed.innovationM },
+    geo,
   );
-  pushLocation(d, smoothed.point, confidence, 'gps', evidence);
+  pushLocation(d, smoothed.point, confidence, 'gps', evidence, geo);
 }
 
 function handleSensorObservation(d, sig) {
@@ -153,10 +211,11 @@ function handleSensorObservation(d, sig) {
   // The estimator needs >=3 anchored sensor observations.
   if (anchored.length < 3) return;
 
-  const structure = structureForDevice();
+  const structure = structureForDevice(d);
   const method =
-    typeof worldmapEstimatorMethod !== 'undefined' && worldmapEstimatorMethod === 'weighted'
-      ? 'weighted'
+    typeof worldmapEstimatorMethod !== 'undefined' &&
+    (worldmapEstimatorMethod === 'weighted' || worldmapEstimatorMethod === 'weighted-rssi-centroid')
+      ? worldmapEstimatorMethod
       : 'multilateration';
 
   // Fingerprint mode: locate from the surveyed radio map
@@ -180,6 +239,7 @@ function handleSensorObservation(d, sig) {
     }
     if (located && located.point) {
       const smoothed = kalmanSmooth(d, located.point, located.confidence);
+      const geo = continuumGeoForPoint(smoothed.point);
       const evidence = buildFixEvidence(
         { point: smoothed.point, confidence: located.confidence, method: 'fingerprint' },
         anchored.map((o) => {
@@ -188,15 +248,44 @@ function handleSensorObservation(d, sig) {
         }),
         'fingerprint',
         { type: 'kalman', innovationM: smoothed.innovationM },
+        geo,
       );
-      pushLocation(d, smoothed.point, located.confidence, 'fingerprint', evidence);
+      pushLocation(d, smoothed.point, located.confidence, 'fingerprint', evidence, geo);
       return;
     }
     // No fingerprint match — fall through to ranging.
   }
 
   let est = null;
-  if (method === 'weighted') {
+  if (method === 'weighted-rssi-centroid') {
+    // ARC-Core's own estimator (exact port): exponential-RSSI
+    // weights over ALL anchored observations, ARC-Core
+    // confidence formula. Falls back to the plugin weighted
+    // estimator if the port is not loaded.
+    if (typeof WorldmapEstimator.estimateWeightedRssiCentroid === 'function') {
+      const arcObs = anchored.map((o) => {
+        const sensor = sensors.find((s) => s.id === o.sensorId);
+        return {
+          sensor,
+          rssi: o.rssi,
+          reliability: sensor ? WorldmapPathloss.sensorReliability(sensor) : 0.8,
+        };
+      });
+      est = WorldmapEstimator.estimateWeightedRssiCentroid(arcObs, structure);
+    }
+    if (!est) {
+      const weightedObs = anchored.map((o) => {
+        const sensor = sensors.find((s) => s.id === o.sensorId);
+        return {
+          sensor,
+          rssi: o.rssi,
+          reliability: sensor ? WorldmapPathloss.sensorReliability(sensor) : 0.8,
+          floorPenalty: 1,
+        };
+      });
+      est = WorldmapEstimator.estimateFromObservations(weightedObs, structure, d._prevFix || null, 1, {});
+    }
+  } else if (method === 'weighted') {
     const weightedObs = anchored.map((o) => {
       const sensor = sensors.find((s) => s.id === o.sensorId);
       return {
@@ -216,6 +305,7 @@ function handleSensorObservation(d, sig) {
   if (!est || !est.point) return;
 
   const smoothed = kalmanSmooth(d, est.point, est.confidence);
+  const geo = continuumGeoForPoint(smoothed.point);
   const evidence = buildFixEvidence(
     { point: smoothed.point, confidence: est.confidence, method: est.method },
     anchored.map((o) => {
@@ -224,8 +314,9 @@ function handleSensorObservation(d, sig) {
     }),
     est.method,
     { type: 'kalman', innovationM: smoothed.innovationM },
+    geo,
   );
-  pushLocation(d, smoothed.point, est.confidence, est.method, evidence);
+  pushLocation(d, smoothed.point, est.confidence, est.method, evidence, geo);
 
   // Observation history for the calibration wizard.
   if (!d._obsHistory) d._obsHistory = [];

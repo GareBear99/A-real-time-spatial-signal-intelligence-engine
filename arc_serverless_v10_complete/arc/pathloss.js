@@ -21,6 +21,19 @@ const CALIBRATION = {
   urban: { name: 'Urban Dense', noise: 4.8, attenuation: 1.18, decay: 0.78, smooth: 0.72 },
   residential: { name: 'Residential', noise: 2.0, attenuation: 0.92, decay: 0.86, smooth: 0.56 },
   interference: { name: 'High Interference', noise: 6.5, attenuation: 1.28, decay: 0.74, smooth: 0.78 },
+  /**
+   * ARC-Core's seeded calibration profile, one per structure
+   * (ARC-Core arc/services/bootstrap.py: "{name} Default",
+   * path_loss 2.2, noise_db 3.5, smoothing 0.65 — identical
+   * for all three structures). ARC-Core v6 stores these values
+   * but does NOT thread them into its forward model (known v6
+   * limit, docs/ARCHITECTURE.md §14); the plugin DOES thread
+   * them: n feeds distanceFromRssi, noise feeds the forward
+   * model, smooth feeds the estimator. path_loss maps to the
+   * path-loss exponent n; attenuation is 1.0 (the ARC-Core
+   * record carries no attenuation value).
+   */
+  'arc-default': { name: 'ARC-Core Default', noise: 3.5, attenuation: 1.0, decay: 0.82, smooth: 0.65, n: 2.2 },
 };
 
 /** Resolve a profile key ('balanced') or a profile object. */

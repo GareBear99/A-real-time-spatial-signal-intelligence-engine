@@ -16,6 +16,10 @@
  * calibration: profile object or key ({noise, attenuation, ...}).
  * method: estimator method name ('weighted' | 'multilateration' | 'gps').
  * filterState: {type:'kalman'|'particle'|..., innovationM?}
+ * zone: continuum zone for the fix ('Center-Core' | 'North Zone' | ...),
+ *   or null when the fix is outside every structure.
+ * geofenceHits: continuum geofence hits [{geofence_id, name, severity,
+ *   geofence_type}] — [] when none.
  */
 function buildEvidencePack(input) {
   const opts = input || {};
@@ -30,6 +34,15 @@ function buildEvidencePack(input) {
     point: { lat: point.lat, lon: point.lon },
     confidence,
     method: opts.method || fix.method || 'unknown',
+    zone: typeof opts.zone === 'string' ? opts.zone : null,
+    geofenceHits: Array.isArray(opts.geofenceHits)
+      ? opts.geofenceHits.map((h) => ({
+          geofence_id: h.geofence_id || null,
+          name: h.name || null,
+          severity: typeof h.severity === 'number' ? h.severity : null,
+          geofence_type: h.geofence_type || null,
+        }))
+      : [],
     errorEstimateM: Number(((1 - confidence) * 20 + 1 + innovationM).toFixed(2)),
     calibration: {
       noise: typeof calibration.noise === 'number' ? calibration.noise : null,

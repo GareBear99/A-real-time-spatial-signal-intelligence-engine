@@ -80,12 +80,13 @@ function makeObservations(truth, sensors, truthFloor, profile, rnd) {
  *     Pine House.
  *   estimator: (observations, structure, previous, floor, opts)
  *     => {point, confidence} — default is estimateFromObservations.
- *   method: 'weighted' (default) or 'multilateration' — a
- *     shorthand for the estimator so the one-click check in
- *     the UI can pick the method without hand-wrapping the
- *     estimator (multilaterate takes (observations, sensors,
- *     options), not the lab's (observations, structure,
- *     previous, floor, opts) shape).
+ *   method: 'weighted' (default), 'multilateration', or
+ *     'weighted-rssi-centroid' (ARC-Core's estimator, exact port
+ *     in arc/estimator.js — a shorthand for the estimator so the
+ *     one-click check in the UI can pick the method without
+ *     hand-wrapping the estimator (multilaterate takes
+ *     (observations, sensors, options), not the lab's
+ *     (observations, structure, previous, floor, opts) shape).
  * Returns {frames, seed, method, rmse, p50, p95, meanConfidence}.
  */
 function runAccuracyLab(options) {
@@ -97,7 +98,12 @@ function runAccuracyLab(options) {
   const levels = Math.max(1, Number((structure && structure.levels) || 1));
   const sensors = opts.sensors || buildSensorsForStructure(structure);
   const profile = opts.profile || 'balanced';
-  const method = opts.method === 'multilateration' ? 'multilateration' : 'weighted';
+  const method =
+    opts.method === 'multilateration'
+      ? 'multilateration'
+      : opts.method === 'weighted-rssi-centroid'
+        ? 'weighted-rssi-centroid'
+        : 'weighted';
   const estimator =
     opts.estimator ||
     (method === 'multilateration'
@@ -107,7 +113,9 @@ function runAccuracyLab(options) {
             structure: struct,
             previous,
           })
-      : WorldmapEstimator.estimateFromObservations);
+      : method === 'weighted-rssi-centroid'
+        ? (obs, struct) => WorldmapEstimator.estimateWeightedRssiCentroid(obs, struct)
+        : WorldmapEstimator.estimateFromObservations);
   const rnd = WorldmapGeo.randomSeededInt(seed);
 
   let previous = null;

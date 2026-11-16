@@ -25,10 +25,19 @@
  *             only, the user's own choice — never a default).
  *
  * Estimator: 'multilateration' (default — least-squares over
- * RSSI distances) or 'weighted' (v8's RSSI-weighted average).
- * The track is smoothed by a Kalman filter unless useFilter
- * is false. fingerprintMode switches the estimator to the
- * surveyed radio map (kNN) when one is loaded.
+ * RSSI distances), 'weighted' (v8's RSSI-weighted average), or
+ * 'weighted-rssi-centroid' (ARC-Core's estimator, exact port —
+ * exponential-RSSI weights over all observations, ARC-Core
+ * confidence formula). The track is smoothed by a Kalman filter
+ * unless useFilter is false. fingerprintMode switches the
+ * estimator to the surveyed radio map (kNN) when one is loaded.
+ *
+ * Continuum segment (arc/continuum.js — ARC-Core's geospatial
+ * surface): showContinuum draws the seeded Williams Lake
+ * structures + perimeter geofences on the map and classifies
+ * every fix into a zone with geofence hits; showContinuumHeat
+ * adds the per-structure track-density grid. Both default:
+ * structures on, heat grid off.
  *
  * GPS sources:
  *   'none' | 'simulator' | 'geolocation' | 'gpx' | 'nmea'
@@ -55,6 +64,8 @@ const WORLDMAP_DEFAULT_SETTINGS = {
   useFilter: true,
   fingerprintMode: false,
   calibrationProfile: 'balanced',
+  showContinuum: true,
+  showContinuumHeat: false,
 };
 
 function isFiniteNumber(value) {
@@ -82,7 +93,7 @@ function sanitizeWorldmapSettings(raw) {
     out.simulatorIntervalMs = Math.floor(raw.simulatorIntervalMs);
   }
   if (typeof raw.showPaths === 'boolean') out.showPaths = raw.showPaths;
-  if (raw.estimatorMethod === 'weighted' || raw.estimatorMethod === 'multilateration') out.estimatorMethod = raw.estimatorMethod;
+  if (raw.estimatorMethod === 'weighted' || raw.estimatorMethod === 'multilateration' || raw.estimatorMethod === 'weighted-rssi-centroid') out.estimatorMethod = raw.estimatorMethod;
   if (typeof raw.useFilter === 'boolean') out.useFilter = raw.useFilter;
   if (typeof raw.fingerprintMode === 'boolean') out.fingerprintMode = raw.fingerprintMode;
   if (
@@ -90,10 +101,13 @@ function sanitizeWorldmapSettings(raw) {
     raw.calibrationProfile === 'urban' ||
     raw.calibrationProfile === 'residential' ||
     raw.calibrationProfile === 'interference' ||
-    raw.calibrationProfile === 'wizard'
+    raw.calibrationProfile === 'wizard' ||
+    raw.calibrationProfile === 'arc-default'
   ) {
     out.calibrationProfile = raw.calibrationProfile;
   }
+  if (typeof raw.showContinuum === 'boolean') out.showContinuum = raw.showContinuum;
+  if (typeof raw.showContinuumHeat === 'boolean') out.showContinuumHeat = raw.showContinuumHeat;
   return out;
 }
 

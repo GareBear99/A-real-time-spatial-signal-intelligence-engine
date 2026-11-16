@@ -29,6 +29,71 @@ the browser with **zero network**.
   model is path loss, geometry, and filtering, in plain
   JavaScript, offline.
 
+## Continuum segment (ARC-Core geospatial surface, 2026-11-15)
+
+The map now carries ARC-Core's real geospatial stack
+(GareBear99/ARC-Core, `arc/services/geospatial.py`,
+`arc/geo/estimator.py`, `arc/services/bootstrap.py`,
+`arc/ui/geo.html`, `docs/CONTINUUM_COMPARISON.md`) as the
+continuum segment in `arc/continuum.js` — offline, plain JS,
+no network. What is wired in, and where it comes from:
+
+- **Structures + perimeter geofences** — the three seeded
+  Williams Lake structures (Pine House, Cedar Duplex,
+  Lakeview Home — the exact polygons from ARC-Core's seed,
+  around the default centre 52.131, -122.141) draw on the map
+  with their severity-5 perimeter geofences. Toggle: "Show
+  structures & geofences" (on by default).
+- **Zones + geofence hits on every fix** — each fix (GPS or
+  estimated) is classified into Center-Core / North / South /
+  West / East Zone (`infer_zone`, exact port) and checked
+  against the fences (`estimate_track`'s fence loop). The
+  zone and hits ride on the location and in its evidence pack,
+  and the panel shows the latest fix's zone + hits and the
+  recent-tracks table (the geo page's tracks table, compact).
+- **Weighted-RSSI centroid estimator** — ARC-Core's own
+  estimator (`estimate_from_observations`, exact port:
+  weight `10^((rssi+100)/12) * reliability` over *all*
+  observations, confidence `0.32 + spread/22 + avgRel*0.25`,
+  box-clamp to the structure bounds), selectable as "Weighted
+  RSSI centroid (ARC-Core)". The Accuracy Lab measures it
+  like the other methods. It is *not* the plugin's older
+  top-4 "Weighted average" — different weights, different
+  confidence.
+- **Calibration profiles, surfaced and threaded** — the three
+  seeded profiles ("{name} Default": path loss 2.2, noise
+  3.5 dB, smoothing 0.65) are listed in the panel, and
+  "ARC-Core default (2.2 / 3.5 / 0.65)" is a selectable signal
+  setting. Note, honestly: ARC-Core v6 *stores* these values
+  but does not thread them into its forward model (known v6
+  limit); the plugin does thread them (exponent into the
+  distance model, noise into the forward model, smoothing
+  into the estimator).
+- **Track-density heat grid** — `get_heatmap`, exact port
+  (8×8 cells over the structure bbox, cell centres outside
+  the polygon discarded, count + mean confidence), drawn as
+  purple grid cells when "Show track heat grid" is on.
+- **Candidate cloud** — `_candidate_cloud`, exact port (16
+  points, radius ∝ (1 − confidence), dropped outside the
+  polygon), drawn around the latest fix inside a structure.
+- **Blueprint overlays** — the overlay records (name,
+  opacity 0.45, scale, offset, rotation, floor) exist per
+  structure; attach a *local* image file to draw it at the
+  structure bounds. ARC-Core's seed points at an
+  example.local placeholder URL that is never fetched; the
+  plugin stores no URL and fetches nothing. Leaflet's image
+  overlay has no rotation, so rotation/scale/offset are
+  stored but only opacity + bounds render.
+
+Deliberately **not** wired in — Future in ARC-Core
+(`CONTINUUM_COMPARISON.md` §4–§5), not implemented here
+and not claimed: 3D / city-scale spatial, streaming ingest
+(WebSocket/SSE/MQTT), push comms to field operators,
+receipt-chain / tamper-evident geo state, risk decay,
+multi-tenant isolation, key rotation, CMR/HUD hardware,
+and multilateration *as an ARC-Core method* (the plugin's
+own multilateration predates this segment and is unchanged).
+
 ## Base
 
 Built off the FIRST one — the zip Gary gave us
@@ -110,12 +175,14 @@ choice.
 ## Settings
 
 Centre, zoom, map picture, GPS source, demo devices and interval,
-how positions are worked out (best fit / weighted average), smooth
-the track, surveyed map, signal setting, show-paths — plain words
-first in the panel, the rest behind "More settings" (standalone),
-or in Lucid's Settings / the segment (installed). Standalone
-settings persist in `localStorage`; installed, Lucid's settings
-store is the source of truth and the page follows it over
+how positions are worked out (best fit / weighted average /
+ARC-Core weighted-RSSI centroid), smooth the track, surveyed map,
+signal setting (including the ARC-Core default profile),
+show-paths, show structures & geofences, show track heat grid —
+plain words first in the panel, the rest behind "More settings"
+(standalone), or in Lucid's Settings / the segment (installed).
+Standalone settings persist in `localStorage`; installed, Lucid's
+settings store is the source of truth and the page follows it over
 `postMessage`.
 
 ## Files
@@ -129,17 +196,23 @@ store is the source of truth and the page follows it over
   for MBTiles + a small MBTiles Leaflet layer (written here —
   the upstream plugin is gone).
 - `arc/` — the engine: `bus`, `entities`, `geo`, `pathloss`,
-  `estimator` (weighted + multilateration), `filter` (Kalman +
-  particle), `lab` (Accuracy Lab + calibration wizard),
+  `estimator` (weighted + multilateration + ARC-Core
+  weighted-RSSI centroid), `continuum` (ARC-Core geospatial
+  surface: structures, geofences, zones, heat grid, candidate
+  cloud, blueprint overlays, calibration profiles), `filter`
+  (Kalman + particle), `lab` (Accuracy Lab + calibration wizard),
   `evidence`, `simulator` (seeded truth + forward model),
   `triangulation` (bus handler: GPS fixes + sensor observations),
-  `map` (settings-driven tiles + grid fallback + rooms),
-  `sensors` (placed/persisted), `rf_canvas` (real RF rings),
-  `room_inference` (GeoJSON floor plans + density clustering),
-  `fingerprint` (kNN radio map, optional), `tiles` (MBTiles +
-  local tiles), `rfimport` (scan files),
+  `map` (settings-driven tiles + grid fallback + rooms +
+  continuum layers), `sensors` (placed/persisted), `rf_canvas`
+  (real RF rings), `room_inference` (GeoJSON floor plans +
+  density clustering), `fingerprint` (kNN radio map, optional),
+  `tiles` (MBTiles + local tiles), `rfimport` (scan files),
   `gps` (Geolocation + GPX + NMEA), `settings` (settings +
   parent bridge).
+- `tests/` — node:test suite (`npm test`): continuum ports
+  checked against the ARC-Core sources, estimator regression,
+  load-order + settings smoke test, offline install-shape test.
 - `manifest.json` — plugin metadata + settings schema.
 
 ## NCO note
