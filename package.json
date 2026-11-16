@@ -4,6 +4,7 @@
   "private": true,
   "description": "Browser-first spatial signal intelligence prototype for RF/Wi‑Fi mapping, geospatial sensor fusion, propagation experiments, and structure-aware signal estimation.",
   "scripts": {
+    "test": "node --test \"arc_serverless_v10_complete/tests/*.test.js\"",
     "serve:canonical": "python3 -m http.server 8080 -d ARC_Spatial_Signal_Intelligence_Engine_Canonical_v1/app",
     "serve:rg": "python3 -m http.server 8080 -d ARC_Spatial_Intelligence_RG_Fusion_v8_9/app"
   },
