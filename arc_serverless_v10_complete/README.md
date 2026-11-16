@@ -1,10 +1,33 @@
 # ARC v10 Offline Worldmap
 
 ARC v10 Serverless Spatial Engine as an **offline world map plugin** —
-multi-device tracking, RF propagation visualization, sensor mesh
-simulation, triangulated location estimation, path history, and an
-experimental room-inference stub. Runs entirely in the browser with
-**zero network**.
+multi-device tracking, real RF propagation visualization, real
+sensors, least-squares multilateration, Kalman-filtered tracks,
+room inference from floor plans, offline tile packs, and an
+Accuracy Lab that measures the error in metres. Runs entirely in
+the browser with **zero network**.
+
+## What is real now (SOTA build, 2026-11-15)
+
+- **Location** comes from least-squares multilateration over
+  RSSI-derived distances (log-distance path loss), smoothed by a
+  Kalman filter — not a centroid average. Baseline on the seeded
+  test track: **5.89 m RMSE** (weighted average: 7.33 m).
+  "How accurate is this?" runs the lab and says so in plain words.
+- **Sensors** are placed (click the map, import a file, or place
+  them for me) — never random. They persist, and a flaky one
+  counts for less.
+- **RF rings** are drawn from real sensor positions and real
+  signal strength. **Rooms** come from a GeoJSON floor plan you
+  import. **Tiles** can be a real offline pack (`.mbtiles` file)
+  or a local tile folder — the grid is the zero-file fallback.
+- **Signal scans** (CSV, JSON, or macOS `airport -s` output)
+  import as a file and triangulate like live signals.
+- **Simulator** output is always labelled SIMULATED. Nothing
+  fake is presented as real.
+- No neural model, no LLM, no GGUF, no training anywhere — the
+  model is path loss, geometry, and filtering, in plain
+  JavaScript, offline.
 
 ## Base
 
@@ -34,22 +57,28 @@ Leaflet 1.9.4 + leaflet-heat are vendored in `vendor/`.
 Default tile mode is **grid** — a lat/lon graticule drawn locally, so
 the map works with zero tile files. To use real map tiles offline:
 
-1. Get tiles as a directory laid out `{z}/{x}/{y}.png` (any tile
-   downloader that writes that layout works; the directory can live
-   anywhere on disk).
-2. Set **Tile source** to `Local tile directory` and paste the
-   directory path (a path relative to this page, or a `file://` path).
-3. The map loads tiles from that directory and nothing else.
+- **Map file (.mbtiles)** — pick a `.mbtiles` pack (single file,
+  read with vendored sql.js). Build one with
+  `scripts/pack-tiles.sh` (Geofabrik extract + Planetiler, needs
+  Java 17+). The pack is remembered by name; pick it again next
+  session (a file can't persist itself).
+- **Local tile folder** — a directory laid out `{z}/{x}/{y}.png`
+  (any tile downloader that writes that layout works; the directory
+  can live anywhere on disk). Set **Map picture** to `Local tile
+  folder` and paste the directory path (a path relative to this
+  page, or a `file://` path).
+- The map loads tiles from that directory/file and nothing else.
 
-A tile URL template (`Tile URL template` mode) is also available for
+A tile URL template (`Web address` mode) is also available for
 online tile servers — that mode needs the network, by the user's own
 choice.
 
 ## GPS
 
-- **None** (default) — no fixes; the map is just there.
-- **Simulator (demo)** — the original simulated signals (random fixes
-  around the centre), for the listed devices.
+- **Nothing yet** (default) — no fixes; the map is just there.
+- **Demo signals (simulated)** — seeded signals from a truth path
+  through the path-loss model, for the listed devices. Always
+  labelled SIMULATED.
 - **Device GPS** — `navigator.geolocation.watchPosition`. Works
   offline on device GPS. In shells with no location provider
   (e.g. Lucid's Electron shell) it reports that it is unavailable
@@ -61,13 +90,33 @@ choice.
   and `$GPRMC` (status A) sentences plot as one device
   (`nmea-track`).
 
+## Sensors, rooms, scans
+
+- **Sensors** — click "Add a sensor" then click the map, or
+  "Place sensors for me" (seeded inside the default structure),
+  or import a JSON/CSV file of `{id, lat, lon, floor}` rows.
+- **Floor plan** — pick a GeoJSON file (FeatureCollection of
+  Polygons, one per room, with a `name`). "What room is this?"
+  names the room the latest fix is in.
+- **Signal scan** — pick a CSV/JSON file of `{sensor, rssi,
+  time}` rows, or a macOS `airport -s` scan. Readings feed the
+  estimator exactly like live signals.
+- **How accurate is this?** — runs the Accuracy Lab (seeded
+  Monte Carlo, 120 frames) and reports the error in metres.
+- **Calibrate** — tunes the signal setting from the fixes seen
+  so far. **Save my data** — exports every location with the
+  observations, calibration, confidence and error behind it.
+
 ## Settings
 
-Centre, zoom, tile source/path, GPS source, simulator devices and
-interval, show-paths — all in the panel on the left (standalone), or
-in Lucid's Settings / the segment (installed). Standalone settings
-persist in `localStorage`; installed, Lucid's settings store is the
-source of truth and the page follows it over `postMessage`.
+Centre, zoom, map picture, GPS source, demo devices and interval,
+how positions are worked out (best fit / weighted average), smooth
+the track, surveyed map, signal setting, show-paths — plain words
+first in the panel, the rest behind "More settings" (standalone),
+or in Lucid's Settings / the segment (installed). Standalone
+settings persist in `localStorage`; installed, Lucid's settings
+store is the source of truth and the page follows it over
+`postMessage`.
 
 ## Files
 
@@ -76,10 +125,19 @@ source of truth and the page follows it over `postMessage`.
   header kept in `leaflet.js`) + the Leaflet marker art
   (`images/marker-icon.png`, `marker-icon-2x.png`,
   `marker-shadow.png` — without these the markers exist in
-  the DOM but render as broken images).
-- `arc/` — the engine: `bus`, `entities`, `simulator`,
-  `triangulation`, `map` (settings-driven tiles + grid fallback),
-  `sensors`, `webgl_rf` (stub), `room_inference` (stub),
+  the DOM but render as broken images) + sql.js 1.13.0 (MIT)
+  for MBTiles + a small MBTiles Leaflet layer (written here —
+  the upstream plugin is gone).
+- `arc/` — the engine: `bus`, `entities`, `geo`, `pathloss`,
+  `estimator` (weighted + multilateration), `filter` (Kalman +
+  particle), `lab` (Accuracy Lab + calibration wizard),
+  `evidence`, `simulator` (seeded truth + forward model),
+  `triangulation` (bus handler: GPS fixes + sensor observations),
+  `map` (settings-driven tiles + grid fallback + rooms),
+  `sensors` (placed/persisted), `rf_canvas` (real RF rings),
+  `room_inference` (GeoJSON floor plans + density clustering),
+  `fingerprint` (kNN radio map, optional), `tiles` (MBTiles +
+  local tiles), `rfimport` (scan files),
   `gps` (Geolocation + GPX + NMEA), `settings` (settings +
   parent bridge).
 - `manifest.json` — plugin metadata + settings schema.

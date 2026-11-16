@@ -24,6 +24,7 @@
 
 let map, heat, markers = [], showPath = true;
 let tileLayer = null;
+let roomLayers = [];
 
 /** A tile that draws the lat/lon graticule on canvas — the
  *  no-tile fallback. Lines every 1° / 0.1° / 0.01° depending
@@ -73,6 +74,19 @@ const GridTileLayer = L.GridLayer.extend({
  *  null when the mode has no layer (never for 'grid'). */
 function buildTileLayer(settings) {
   const mode = (settings && settings.tileMode) || 'grid';
+  if (mode === 'mbtiles') {
+    // A real offline tile pack (single .mbtiles file, opened
+    // with vendored sql.js). No pack open yet -> the grid,
+    // so the map still works; the page says to pick a file.
+    if (typeof WorldmapTiles !== 'undefined' && WorldmapTiles.createMbtilesLayer) {
+      try {
+        return WorldmapTiles.createMbtilesLayer();
+      } catch (e) {
+        return new GridTileLayer();
+      }
+    }
+    return new GridTileLayer();
+  }
   if (mode === 'local') {
     const raw = ((settings && settings.tilePath) || '').trim();
     if (!raw) return new GridTileLayer();
@@ -112,10 +126,45 @@ function initMap(settings) {
 
 function togglePath() { showPath = !showPath; }
 
+/** Draw the loaded floor-plan rooms as polygons with their
+ *  names. No rooms loaded -> nothing drawn. Safe without L. */
+function renderRoomsOnMap() {
+  roomLayers.forEach((layer) => {
+    try {
+      map.removeLayer(layer);
+    } catch (e) {
+      // Best effort.
+    }
+  });
+  roomLayers = [];
+  if (!map || typeof L === 'undefined' || !L.polygon) return 0;
+  if (typeof WorldmapRooms === 'undefined' || !WorldmapRooms.getRooms) return 0;
+  let rooms = [];
+  try {
+    rooms = WorldmapRooms.getRooms() || [];
+  } catch (e) {
+    return 0;
+  }
+  rooms.forEach((room) => {
+    if (!room || !Array.isArray(room.polygon) || room.polygon.length < 3) return;
+    try {
+      const pts = room.polygon.map((p) => (Array.isArray(p) ? [p[0], p[1]] : [p.lat, p.lon]));
+      const layer = L.polygon(pts, { color: '#66ccff', weight: 2, fillOpacity: 0.08 }).addTo(map);
+      if (room.name) layer.bindTooltip(room.name, { permanent: true, direction: 'center', className: 'room-label' });
+      roomLayers.push(layer);
+    } catch (e) {
+      // A room that cannot draw is skipped, not fatal.
+    }
+  });
+  return roomLayers.length;
+}
+
 function updateMap() {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   const heatPts = [];
+
+  renderRoomsOnMap();
 
   Object.values(graph.devices).forEach(d => {
     const loc = d.locations.at(-1);
@@ -134,6 +183,19 @@ function updateMap() {
 
   heat.setLatLngs(heatPts);
 
+  const last = Object.values(graph.devices).map(d => d.locations.at(-1)).filter(Boolean).pop();
+  const roomText = last && typeof WorldmapRooms !== 'undefined' && WorldmapRooms.getRooms
+    ? (function () {
+        try {
+          const rooms = WorldmapRooms.getRooms() || [];
+          if (!rooms.length) return '';
+          const name = WorldmapRooms.assignRoom(last, rooms);
+          return name && name !== 'Unknown' ? ' · ' + name : '';
+        } catch (e) {
+          return '';
+        }
+      })()
+    : '';
   document.getElementById("stats").innerText =
-    "devices:" + Object.keys(graph.devices).length;
+    "devices:" + Object.keys(graph.devices).length + roomText;
 }

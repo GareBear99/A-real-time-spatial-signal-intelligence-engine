@@ -3,39 +3,54 @@
 <head>
 <meta charset="utf-8">
 <title>ARC v10 Offline Worldmap</title>
-<!-- Offline build: Leaflet + heat are vendored in ./vendor — no CDN, no network. -->
+<!-- Offline build: Leaflet + heat + sql.js are vendored in ./vendor — no CDN, no network. -->
 <link rel="stylesheet" href="vendor/leaflet.css"/>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/leaflet-heat.js"></script>
+<script src="vendor/sql-wasm.js"></script>
+<script src="vendor/Leaflet.TileLayer.MBTiles.js"></script>
 <style>
 html,body,#map{height:100%;margin:0;background:#000}
 #ui{
 position:absolute;top:10px;left:10px;background:#111;color:#0f0;
-padding:10px;font-family:monospace;z-index:999;width:240px;
+padding:10px;font-family:monospace;z-index:999;width:250px;
 max-height:calc(100% - 20px);overflow-y:auto;
 }
 button{width:100%;margin-top:4px}
 input,select{width:100%;margin-top:4px;background:#000;color:#0f0;border:1px solid #0f0;font-family:monospace}
 label{font-size:11px;display:block;margin-top:6px}
 canvas{position:absolute;top:0;left:0;pointer-events:none}
-#gpsStatus{font-size:11px;margin-top:4px;min-height:14px}
+#gpsStatus,#roomStatus,#accuracyLine{font-size:11px;margin-top:4px;min-height:14px}
+#simBadge{display:none;color:#000;background:#ff0;font-weight:bold;padding:1px 5px;margin-top:4px}
+#simBadge.on{display:inline-block}
+.room-label{background:transparent;border:none;color:#6cf;font:11px monospace;text-shadow:0 0 3px #000}
+details{margin-top:8px}
+details summary{cursor:pointer;font-size:11px}
 </style>
 </head>
 <body>
 
 <div id="ui">
-<b>ARC v10 Offline Worldmap</b><br>
-<button onclick="startSim()">Start Signals</button>
+<b>ARC v10 Offline Worldmap</b> <span id="simBadge">SIMULATED</span><br>
+<button onclick="startSim()">Start demo signals</button>
 <button onclick="stopSim()">Stop</button>
-<button onclick="toggleSensors()">Sensors</button>
-<button onclick="togglePath()">Paths</button>
-<button onclick="runRoomInference()">Infer Rooms</button>
+<button onclick="toggleSensors()">Show sensors</button>
+<button onclick="togglePath()">Show paths</button>
+<button onclick="togglePlaceSensor()">Add a sensor (click the map)</button>
+<button onclick="placeSensorsForMe()">Place sensors for me</button>
+<button onclick="runRoomInference()">What room is this?</button>
+<button onclick="runAccuracyCheck()">How accurate is this?</button>
+<button onclick="runCalibration()">Calibrate</button>
+<button onclick="exportEvidence()">Save my data</button>
 <div id="stats"></div>
+<div id="accuracyLine"></div>
+<div id="roomStatus"></div>
+<div id="gpsStatus"></div>
 
-<label>GPS source
+<label>Where do locations come from?
 <select id="gpsSource">
-<option value="none">None</option>
-<option value="simulator">Simulator (demo)</option>
+<option value="none">Nothing yet</option>
+<option value="simulator">Demo signals (simulated)</option>
 <option value="geolocation">Device GPS</option>
 <option value="gpx">GPX file</option>
 <option value="nmea">NMEA file</option>
@@ -43,23 +58,48 @@ canvas{position:absolute;top:0;left:0;pointer-events:none}
 </label>
 <label>GPX file <input id="gpxFile" type="file" accept=".gpx,.xml"></label>
 <label>NMEA file <input id="nmeaFile" type="file" accept=".nmea,.txt"></label>
-<div id="gpsStatus"></div>
 
+<label>Map picture
+<select id="tileMode">
+<option value="grid">Grid (no files — offline)</option>
+<option value="mbtiles">Map file (.mbtiles)</option>
+<option value="local">Local tile folder</option>
+<option value="url">Web address</option>
+</select>
+</label>
+<label>Map file (.mbtiles) <input id="mbtilesFile" type="file" accept=".mbtiles"></label>
+<label>Floor plan (GeoJSON) <input id="floorPlanFile" type="file" accept=".geojson,.json"></label>
+<label>Signal scan (CSV / JSON / airport) <input id="scanFile" type="file" accept=".csv,.json,.txt"></label>
+<label>Sensors file (JSON / CSV) <input id="sensorFile" type="file" accept=".json,.csv"></label>
+
+<details>
+<summary>More settings</summary>
 <label>Centre latitude <input id="centerLat" type="number" step="0.001" min="-90" max="90"></label>
 <label>Centre longitude <input id="centerLon" type="number" step="0.001" min="-180" max="180"></label>
 <label>Zoom <input id="zoom" type="number" step="1" min="0" max="19"></label>
-<label>Tile source
-<select id="tileMode">
-<option value="grid">Grid (no tiles — offline)</option>
-<option value="local">Local tile directory</option>
-<option value="url">Tile URL template</option>
+<label>Tile folder / path <input id="tilePath" type="text" placeholder="tiles or file:///path/to/tiles"></label>
+<label>Tile web address <input id="tileUrlTemplate" type="text" placeholder="https://{s}.tile.example.com/{z}/{x}/{y}.png"></label>
+<label>Demo device names (comma separated) <input id="simulatorDevices" type="text"></label>
+<label>How positions are worked out
+<select id="estimatorMethod">
+<option value="multilateration">Best fit from signal strength</option>
+<option value="weighted">Weighted average</option>
 </select>
 </label>
-<label>Tile directory / path <input id="tilePath" type="text" placeholder="tiles or file:///path/to/tiles"></label>
-<label>Tile URL template <input id="tileUrlTemplate" type="text" placeholder="https://{s}.tile.example.com/{z}/{x}/{y}.png"></label>
-<label>Simulator devices (comma separated) <input id="simulatorDevices" type="text"></label>
+<label><input id="useFilter" type="checkbox" style="width:auto"> Smooth the track</label>
+<label><input id="fingerprintMode" type="checkbox" style="width:auto"> Use my surveyed map instead</label>
+<label>Signal setting
+<select id="calibrationProfile">
+<option value="balanced">Balanced</option>
+<option value="urban">City (dense)</option>
+<option value="residential">Home</option>
+<option value="interference">Noisy</option>
+<option value="wizard">Calibrated by me</option>
+</select>
+</label>
 <label><input id="showPaths" type="checkbox" style="width:auto"> Show paths</label>
 <button onclick="applyWorldmapSettingsFromUI()">Apply settings</button>
+</details>
 </div>
 
 <div id="map"></div>
@@ -67,26 +107,63 @@ canvas{position:absolute;top:0;left:0;pointer-events:none}
 
 <script src="arc/bus.js"></script>
 <script src="arc/entities.js"></script>
+<script src="arc/geo.js"></script>
+<script src="arc/pathloss.js"></script>
+<script src="arc/estimator.js"></script>
+<script src="arc/filter.js"></script>
+<script src="arc/lab.js"></script>
+<script src="arc/evidence.js"></script>
 <script src="arc/simulator.js"></script>
 <script src="arc/triangulation.js"></script>
 <script src="arc/map.js"></script>
 <script src="arc/sensors.js"></script>
-<script src="arc/webgl_rf.js"></script>
+<script src="arc/rf_canvas.js"></script>
 <script src="arc/room_inference.js"></script>
+<script src="arc/fingerprint.js"></script>
+<script src="arc/tiles.js"></script>
+<script src="arc/rfimport.js"></script>
 <script src="arc/gps.js"></script>
 <script src="arc/settings.js"></script>
 
 <script>
 /* Boot: settings first (localStorage standalone, or the parent
- * pushes its own over postMessage once embedded), then map + RF. */
+ * pushes its own over postMessage once embedded), then map + RF.
+ * Defaults work with zero configuration: grid map, no GPS
+ * source, demo signals off. */
 const bootSettings = WorldmapSettings.load();
 initMap(bootSettings);
 initRF();
+applyEngineSettings(bootSettings);
+try { WorldmapSensors.SensorStore.load(); } catch (e) { /* start empty */ }
+try { WorldmapRF.setRFSensors(WorldmapSensors.SensorStore.list()); } catch (e) { /* no sensors yet */ }
 syncWorldmapSettingsUI(bootSettings);
+
+let placeSensorMode = false;
 
 function gpsStatus(text) {
   const el = document.getElementById('gpsStatus');
   if (el) el.textContent = text;
+}
+
+function setSimBadge(on) {
+  const el = document.getElementById('simBadge');
+  if (el) el.className = on ? 'on' : '';
+}
+
+/* Engine globals the triangulation handler reads: which
+ * estimator, whether the track is smoothed, and which
+ * calibration profile. Set from settings on boot and on
+ * every settings change. */
+function applyEngineSettings(settings) {
+  window.worldmapEstimatorMethod = settings.estimatorMethod || 'multilateration';
+  window.worldmapUseFilter = settings.useFilter !== false;
+  if (typeof WorldmapEstimator !== 'undefined' && WorldmapEstimator.setProfile) {
+    WorldmapEstimator.setProfile(settings.calibrationProfile || 'balanced');
+  }
+  if (typeof WorldmapFingerprint !== 'undefined' && WorldmapFingerprint.setMode) {
+    WorldmapFingerprint.setMode(settings.fingerprintMode ? 'fingerprint' : 'ranging');
+  }
+  setSimBadge(settings.gpsSource === 'simulator');
 }
 
 /* Called by settings.js whenever settings change (UI apply or a
@@ -98,13 +175,14 @@ function applyWorldmapSettings(settings) {
     setTileLayer(settings);
     showPath = settings.showPaths !== false;
   }
+  applyEngineSettings(settings);
   stopSim();
   WorldmapGPS.stopGeolocation();
   devices = (settings.simulatorDevices || ['phone1', 'phone2']).slice();
   simulatorIntervalMs = settings.simulatorIntervalMs || 600;
   if (settings.gpsSource === 'simulator') {
     startSim();
-    gpsStatus('Simulator running: ' + devices.join(', '));
+    gpsStatus('Demo signals running: ' + devices.join(', ') + ' (simulated).');
   } else if (settings.gpsSource === 'geolocation') {
     const ok = WorldmapGPS.startGeolocation(
       (fix) => WorldmapGPS.feedFixes('gps', [fix]),
@@ -128,14 +206,22 @@ function syncWorldmapSettingsUI(settings) {
   set('tilePath', settings.tilePath);
   set('tileUrlTemplate', settings.tileUrlTemplate);
   set('simulatorDevices', (settings.simulatorDevices || []).join(', '));
+  set('estimatorMethod', settings.estimatorMethod || 'multilateration');
+  set('calibrationProfile', settings.calibrationProfile || 'balanced');
   const paths = document.getElementById('showPaths');
   if (paths) paths.checked = settings.showPaths !== false;
+  const filt = document.getElementById('useFilter');
+  if (filt) filt.checked = settings.useFilter !== false;
+  const fp = document.getElementById('fingerprintMode');
+  if (fp) fp.checked = settings.fingerprintMode === true;
 }
 
 function applyWorldmapSettingsFromUI() {
   const num = (id) => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : undefined; };
   const str = (id) => { const el = document.getElementById(id); return el ? el.value : undefined; };
   const paths = document.getElementById('showPaths');
+  const filt = document.getElementById('useFilter');
+  const fp = document.getElementById('fingerprintMode');
   WorldmapSettings.set({
     centerLat: num('centerLat'),
     centerLon: num('centerLon'),
@@ -146,11 +232,142 @@ function applyWorldmapSettingsFromUI() {
     gpsSource: str('gpsSource'),
     simulatorDevices: (str('simulatorDevices') || '').split(',').map(s => s.trim()).filter(Boolean),
     showPaths: paths ? paths.checked : undefined,
+    estimatorMethod: str('estimatorMethod'),
+    useFilter: filt ? filt.checked : undefined,
+    fingerprintMode: fp ? fp.checked : undefined,
+    calibrationProfile: str('calibrationProfile'),
+  });
+}
+
+/* One-click accuracy check (Accuracy Lab): runs the seeded
+ * test track through the current estimator and reports the
+ * error in plain words. Nothing is claimed without this. */
+function runAccuracyCheck() {
+  const line = document.getElementById('accuracyLine');
+  if (typeof WorldmapLab === 'undefined' || !WorldmapLab.runAccuracyLab) {
+    if (line) line.textContent = 'Accuracy check is not loaded.';
+    return;
+  }
+  const settings = WorldmapSettings.get();
+  const method = settings.estimatorMethod || 'multilateration';
+  let report;
+  try {
+    report = WorldmapLab.runAccuracyLab({ frames: 120, seed: 101, method });
+  } catch (e) {
+    if (line) line.textContent = 'Accuracy check failed: ' + (e && e.message ? e.message : e);
+    return;
+  }
+  window.__lastAccuracyReport = report;
+  if (line) {
+    line.textContent = 'How accurate: about ' + report.rmse + ' m off on average — half the time within '
+      + report.p50 + ' m, almost always within ' + report.p95 + ' m.';
+  }
+}
+
+/* One-click calibration (wizard): tunes the signal setting
+ * from the fixes seen so far and installs it. */
+function runCalibration() {
+  const line = document.getElementById('accuracyLine');
+  if (typeof WorldmapLab === 'undefined' || !WorldmapLab.runCalibrationWizard) {
+    if (line) line.textContent = 'Calibration is not loaded.';
+    return;
+  }
+  const hist = [];
+  Object.values(graph.devices).forEach((d) => {
+    (d._obsHistory || []).forEach((h) => hist.push(h));
+  });
+  const current = (WorldmapSettings.get() || {}).calibrationProfile || 'balanced';
+  let tuned;
+  try {
+    tuned = WorldmapLab.runCalibrationWizard(hist, current);
+  } catch (e) {
+    if (line) line.textContent = 'Calibration failed: ' + (e && e.message ? e.message : e);
+    return;
+  }
+  try {
+    if (typeof WorldmapPathloss !== 'undefined') {
+      WorldmapPathloss.CALIBRATION.wizard = tuned;
+    }
+    if (typeof WorldmapEstimator !== 'undefined' && WorldmapEstimator.setProfile) {
+      WorldmapEstimator.setProfile('wizard');
+    }
+    WorldmapSettings.set({ calibrationProfile: 'wizard' });
+    syncWorldmapSettingsUI(WorldmapSettings.get());
+  } catch (e) {
+    // The numbers are still shown even if install fails.
+  }
+  if (line) {
+    line.textContent = 'Calibrated: signal noise ' + tuned.noise + ', signal loss ' + tuned.attenuation + ' — applied.';
+  }
+}
+
+/* Evidence export: every location with the observations,
+ * calibration, confidence and error behind it, as JSON. */
+function exportEvidence() {
+  const line = document.getElementById('accuracyLine');
+  if (typeof WorldmapEvidence === 'undefined' || !WorldmapEvidence.exportEvidenceJSON) {
+    if (line) line.textContent = 'Save is not loaded.';
+    return;
+  }
+  const packs = [];
+  Object.values(graph.devices).forEach((d) => {
+    (d.locations || []).forEach((loc) => {
+      if (loc.evidence) packs.push(loc.evidence);
+    });
+  });
+  let text = '';
+  try {
+    text = WorldmapEvidence.exportEvidenceJSON(packs);
+  } catch (e) {
+    if (line) line.textContent = 'Save failed: ' + (e && e.message ? e.message : e);
+    return;
+  }
+  const blob = new Blob([text], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'worldmap-evidence.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (line) line.textContent = 'Saved ' + packs.length + ' locations with their evidence.';
+}
+
+/* Click the map to drop a sensor at that spot. */
+function togglePlaceSensor() {
+  placeSensorMode = !placeSensorMode;
+  gpsStatus(placeSensorMode ? 'Click the map to drop a sensor.' : '');
+}
+
+function placeSensorsForMe() {
+  let count = 0;
+  try {
+    count = WorldmapSensors.SensorStore.autoPlace().length;
+    WorldmapRF.setRFSensors(WorldmapSensors.SensorStore.list());
+    if (typeof renderSensors === 'function') renderSensors();
+  } catch (e) {
+    gpsStatus('Could not place sensors: ' + (e && e.message ? e.message : e));
+    return;
+  }
+  gpsStatus(count + ' sensors placed.');
+}
+
+if (typeof map !== 'undefined' && map) {
+  map.on('click', (e) => {
+    if (!placeSensorMode) return;
+    const placed = WorldmapSensors.SensorStore.placeAt(e.latlng.lat, e.latlng.lng);
+    if (placed) {
+      try { WorldmapRF.setRFSensors(WorldmapSensors.SensorStore.list()); } catch (err) { /* no RF yet */ }
+      if (typeof renderSensors === 'function') renderSensors();
+      gpsStatus('Sensor placed at ' + placed.lat.toFixed(5) + ', ' + placed.lon.toFixed(5) + '.');
+    }
   });
 }
 
 document.getElementById('gpsSource').addEventListener('change', (e) => {
   WorldmapSettings.set({ gpsSource: e.target.value });
+});
+document.getElementById('tileMode').addEventListener('change', (e) => {
+  WorldmapSettings.set({ tileMode: e.target.value });
 });
 document.getElementById('gpxFile').addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
@@ -168,6 +385,59 @@ document.getElementById('nmeaFile').addEventListener('change', (e) => {
     (err) => gpsStatus('NMEA failed: ' + (err && err.message ? err.message : err))
   );
 });
+document.getElementById('mbtilesFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  WorldmapTiles.openMbtilesFile(file).then(
+    () => {
+      WorldmapSettings.set({ tileMode: 'mbtiles', mbtilesPath: file.name });
+      setTileLayer(WorldmapSettings.get());
+      gpsStatus('Map file loaded: ' + file.name + '.');
+    },
+    (err) => gpsStatus('Map file failed: ' + (err && err.message ? err.message : err))
+  );
+});
+document.getElementById('floorPlanFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  WorldmapRooms.loadFloorPlanFromFile(file).then(
+    (result) => {
+      const n = result && result.rooms ? result.rooms.length : 0;
+      if (n) {
+        if (typeof renderRoomsOnMap === 'function') renderRoomsOnMap();
+        gpsStatus('Floor plan loaded: ' + n + ' room' + (n === 1 ? '' : 's') + '.');
+      } else {
+        gpsStatus('Floor plan had no rooms in it.');
+      }
+    },
+    (err) => gpsStatus('Floor plan failed: ' + (err && err.message ? err.message : err))
+  );
+});
+document.getElementById('scanFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  WorldmapRFImport.loadScanFile(file, 'scan').then(
+    (n) => gpsStatus('Scan plotted: ' + n + ' readings.'),
+    (err) => gpsStatus('Scan failed: ' + (err && err.message ? err.message : err))
+  );
+});
+document.getElementById('sensorFile').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  file.text().then((text) => {
+    let n = 0;
+    try {
+      n = WorldmapSensors.SensorStore.importJSON(text);
+      if (!n) n = WorldmapSensors.SensorStore.importCSV(text);
+    } catch (err) {
+      gpsStatus('Sensors file failed: ' + (err && err.message ? err.message : err));
+      return;
+    }
+    try { WorldmapRF.setRFSensors(WorldmapSensors.SensorStore.list()); } catch (err) { /* no RF yet */ }
+    if (typeof renderSensors === 'function') renderSensors();
+    gpsStatus(n ? ('Sensors loaded: ' + n + '.') : 'Sensors file had no sensors in it.');
+  });
+});
 
 /* Test/debug hook (also how the Lucid segment reads state back):
  * map, device graph, bus, settings and GPS parsers. */
@@ -177,6 +447,12 @@ window.__worldmap = {
   bus: bus,
   settings: WorldmapSettings,
   gps: WorldmapGPS,
+  lab: typeof WorldmapLab !== 'undefined' ? WorldmapLab : null,
+  rooms: typeof WorldmapRooms !== 'undefined' ? WorldmapRooms : null,
+  sensors: typeof WorldmapSensors !== 'undefined' ? WorldmapSensors : null,
+  rf: typeof WorldmapRF !== 'undefined' ? WorldmapRF : null,
+  tiles: typeof WorldmapTiles !== 'undefined' ? WorldmapTiles : null,
+  fingerprint: typeof WorldmapFingerprint !== 'undefined' ? WorldmapFingerprint : null,
 };
 WorldmapSettings.postToParent({ type: 'worldmap:ready', settings: WorldmapSettings.get() });
 </script>
